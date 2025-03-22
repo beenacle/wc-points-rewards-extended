@@ -2,27 +2,15 @@
 /**
  * Plugin Name: WooCommerce Points and Rewards Extended
  * Plugin URI: https://beenacle.com/
- * Description: Extends WooCommerce Points and Rewards with auto-apply discounts and role-based points multipliers
+ * Description: Extends WooCommerce Points and Rewards with auto-apply discounts and role-based points multipliers.
  * Author: Beenacle Technologies
  * Author URI: https://beenacle.com/
  * Version: 1.0.0
  * Text Domain: wc-points-rewards-extended
- * Domain Path: /languages/
  * Requires Plugins: woocommerce, woocommerce-points-and-rewards
- * Tested up to: 6.7
- * WC tested up to: 9.8
- * WC requires at least: 7.5
- *
- * Copyright: © 2024 Beenacle Technologies
- *
- * License: GNU General Public License v3.0
- * License URI: https://www.gnu.org/licenses/gpl-3.0.html
- *
- * This plugin extends WooCommerce Points and Rewards by WooCommerce.
- * WooCommerce Points and Rewards Copyright: © 2025 WooCommerce
- * WooCommerce Points and Rewards License: GNU General Public License v3.0
- * WooCommerce Points and Rewards License URI: https://www.gnu.org/licenses/gpl-3.0.html
+ * License: GPL-3.0-or-later
  */
+
 
 if (!defined('ABSPATH')) {
     exit;
@@ -43,8 +31,8 @@ function wc_points_rewards_extended_check_dependencies() {
         return false;
     }
 
-    if (!class_exists('WC_Points_Rewards')) {
-        add_action('admin_notices', function() {
+if (!class_exists('WC_Points_Rewards')) {
+    add_action('admin_notices', function() {
             $message = '<div class="error"><p>' .
                 esc_html__('WooCommerce Points and Rewards Extended requires WooCommerce Points and Rewards to be installed and active.', 'wc-points-rewards-extended') .
                 '</p><p>' . esc_html__('Please ensure that:', 'wc-points-rewards-extended') . '</p>';
@@ -66,8 +54,8 @@ function wc_points_rewards_extended_check_dependencies() {
  */
 function wc_points_rewards_extended_init() {
     if (!wc_points_rewards_extended_check_dependencies()) {
-        return;
-    }
+    return;
+}
     WC_Points_Rewards_Extended();
 }
 
@@ -116,6 +104,9 @@ class WC_Points_Rewards_Extended {
         add_filter('wc_points_rewards_points_earned_for_purchase', array($this, 'apply_role_points_multiplier'), 10, 2);
         add_filter('woocommerce_points_earned_for_order_item', array($this, 'apply_role_points_multiplier'), 10, 5);
         add_filter('wc_points_rewards_increase_points', array($this, 'apply_role_points_multiplier'), 10, 5);
+
+        // Prevent earning points on points spent
+        add_filter('wc_points_rewards_points_earned_for_purchase', array($this, 'adjust_points_for_points_spent'), 20, 2);
 
         // Auto-apply points
         add_action('woocommerce_before_checkout_form', array($this, 'auto_apply_points_discount'), 20);
@@ -209,68 +200,34 @@ class WC_Points_Rewards_Extended {
      */
     private function render_multipliers_table($field_id, $multipliers, $roles) {
         ?>
-        <style>
-            .role-multipliers-table th {
-                padding: 10px;
-                font-weight: normal;
-                vertical-align: middle;
-                background-color: #f8f8f8;
-                border-bottom: 1px solid #ddd;
-            }
-            .role-multipliers-table td {
-                padding: 8px 10px;
-                vertical-align: middle;
-                border-bottom: 1px solid #f0f0f0;
-            }
-            .role-multipliers-table tr:last-child td {
-                border-bottom: none;
-            }
-            .role-multipliers-table input {
-                width: 80px;
-                border-radius: 4px;
-                border: 1px solid #ddd;
-                padding: 5px 8px;
-            }
-            .role-multipliers-table input:focus {
-                border-color: #007cba;
-                box-shadow: 0 0 0 1px #007cba;
-                outline: 2px solid transparent;
-            }
-            .role-multipliers-caption {
-                margin-top: 15px;
-                font-size: 12px;
-                color: #777;
-                font-style: italic;
-            }
-        </style>
-        <table class="widefat role-multipliers-table" style="max-width: 350px;">
-            <thead>
-                <tr>
-                    <th><?php echo esc_html__('Role', 'wc-points-rewards-extended'); ?></th>
-                    <th><?php echo esc_html__('Multiplier', 'wc-points-rewards-extended'); ?></th>
-                </tr>
-            </thead>
+        <table class="form-table">
             <tbody>
                 <?php foreach ($roles as $role_id => $role_name) :
                     $multiplier = isset($multipliers[$role_id]) ? $multipliers[$role_id] : 1;
                 ?>
                 <tr>
-                    <td><?php echo esc_html($role_name); ?></td>
-                    <td>
+                    <th scope="row" class="titledesc">
+                        <label for="<?php echo esc_attr($field_id . '_' . $role_id); ?>">
+                            <?php echo esc_html($role_name); ?>
+                        </label>
+                    </th>
+                    <td class="forminp">
                         <input
                             type="number"
                             step="0.01"
                             min="0"
+                            id="<?php echo esc_attr($field_id . '_' . $role_id); ?>"
                             name="<?php echo esc_attr($field_id); ?>[<?php echo esc_attr($role_id); ?>]"
                             value="<?php echo esc_attr($multiplier); ?>"
                             class="wc_input_decimal"
+                            style="width: 80px;"
                         />
                     </td>
                 </tr>
                 <?php endforeach; ?>
             </tbody>
         </table>
-        <p class="role-multipliers-caption">
+        <p class="description">
             <?php echo esc_html__('Note: A multiplier of 1 means no change in points earned. Set to 0 to prevent earning points.', 'wc-points-rewards-extended'); ?>
         </p>
         <?php
@@ -380,6 +337,80 @@ class WC_Points_Rewards_Extended {
         } else {
             return get_current_user_id();
         }
+    }
+
+    /**
+     * Adjust points earned to exclude amount spent using points
+     *
+     * @param int $points Points to adjust
+     * @param WC_Order $order Order object
+     * @return int Adjusted points
+     */
+    public function adjust_points_for_points_spent($points, $order) {
+        if (!$order instanceof WC_Order) {
+            return $points;
+        }
+
+        // Get the discount amount from points
+        $points_discount = 0;
+        foreach ($order->get_coupon_codes() as $coupon_code) {
+            if (strpos($coupon_code, 'wc_points_redemption_') === 0) {
+                $coupon = new WC_Coupon($coupon_code);
+                $points_discount += $coupon->get_amount();
+            }
+        }
+
+        if ($points_discount <= 0) {
+            return $points;
+        }
+
+        // Calculate points that would be earned on the discount amount using the parent plugin's calculation
+        $points_for_discount = WC_Points_Rewards_Manager::calculate_points($points_discount);
+
+        // Apply any role multipliers to the points being subtracted
+        $points_for_discount = $this->apply_role_points_multiplier($points_for_discount, $order);
+
+        // Subtract points that would be earned on the discount amount
+        return max(0, $points - $points_for_discount);
+    }
+
+    /**
+     * Override parent plugin's points earned calculation to not reduce by discounts
+     */
+    public function get_points_earned_for_purchase() {
+        $points_earned = 0;
+
+        foreach (WC()->cart->get_cart() as $item_key => $item) {
+            $points_earned += apply_filters('woocommerce_points_earned_for_cart_item', WC_Points_Rewards_Product::get_points_earned_for_product_purchase($item['data']), $item_key, $item) * $item['quantity'];
+        }
+
+        // Apply role multiplier
+        $points_earned = $this->apply_role_multiplier($points_earned);
+
+        // Round the points
+        $points_earned = WC_Points_Rewards_Manager::round_the_points($points_earned);
+
+        return apply_filters('wc_points_rewards_points_earned_for_purchase', $points_earned, WC()->cart);
+    }
+
+    /**
+     * Apply role-based multiplier to points
+     */
+    private function apply_role_multiplier($points) {
+        if (!is_user_logged_in()) {
+            return $points;
+        }
+
+        $user = wp_get_current_user();
+        $multipliers = get_option('wc_points_rewards_role_multipliers', array());
+
+        foreach ($user->roles as $role) {
+            if (isset($multipliers[$role]) && $multipliers[$role] > 0) {
+                return $points * $multipliers[$role];
+            }
+        }
+
+        return $points;
     }
 }
 
