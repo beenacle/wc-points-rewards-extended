@@ -110,6 +110,10 @@ class WC_Points_Rewards_Extended {
 
         // Auto-apply points
         add_action('woocommerce_before_checkout_form', array($this, 'auto_apply_points_discount'), 20);
+
+        // Include CSV import functionality
+        require_once plugin_dir_path(__FILE__) . 'includes/class-wc-points-rewards-extended-csv-import.php';
+        new WC_Points_Rewards_Extended_CSV_Import();
     }
 
     /**
