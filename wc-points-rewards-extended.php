@@ -123,32 +123,54 @@ class WC_Points_Rewards_Extended {
      * @return array Modified settings
      */
     public function add_multiplier_settings($settings) {
-        $new_settings = array();
+        $settings[] = array(
+            'name' => __('Role-Based Point Multipliers', 'wc-points-rewards-extended'),
+            'type' => 'title',
+            'desc' => __('Configure point multipliers for different user roles.', 'wc-points-rewards-extended'),
+            'id' => 'wc_points_rewards_role_multipliers'
+        );
 
-        foreach ($settings as $setting) {
-            $new_settings[] = $setting;
+        $settings[] = array(
+            'type' => 'role_multipliers',
+            'id' => 'wc_points_rewards_role_multipliers'
+        );
 
-            if (isset($setting['id']) && $setting['id'] === 'wc_points_rewards_points_expiry') {
-                $new_settings[] = array(
-                    'title'    => __('Auto-Apply Points', 'wc-points-rewards-extended'),
-                    'desc'     => __('Automatically apply available points at checkout', 'wc-points-rewards-extended'),
-                    'desc_tip' => __('When enabled, points will be automatically applied at checkout if the user has available points.', 'wc-points-rewards-extended'),
-                    'id'       => 'wc_points_rewards_auto_apply',
-                    'default'  => 'yes',
-                    'type'     => 'checkbox'
-                );
+        $settings[] = array(
+            'name' => __('Coupons Bypassing Role Multipliers', 'wc-points-rewards-extended'),
+            'type' => 'multiselect',
+            'class' => 'wc-enhanced-select',
+            'css' => 'width: 50%;',
+            'desc' => __('Select coupons that will bypass role-based point multipliers. Points will be calculated normally for these coupons.', 'wc-points-rewards-extended'),
+            'id' => 'wc_points_rewards_bypass_multiplier_coupons',
+            'options' => $this->get_all_coupons(),
+            'custom_attributes' => array(
+                'data-placeholder' => __('Select coupons', 'wc-points-rewards-extended')
+            )
+        );
 
-                $new_settings[] = array(
-                    'title'    => __('Role-Based Point Multipliers', 'wc-points-rewards-extended'),
-                    'desc_tip' => __('Set multipliers for points earned based on user roles. A multiplier of 2 means users with that role will earn twice the normal points.', 'wc-points-rewards-extended'),
-                    'id'       => 'wc_points_rewards_role_multipliers',
-                    'default'  => array(),
-                    'type'     => 'role_multipliers'
-                );
-            }
+        $settings[] = array('type' => 'sectionend', 'id' => 'wc_points_rewards_role_multipliers');
+
+        return $settings;
+    }
+
+    /**
+     * Get all active coupons
+     */
+    private function get_all_coupons() {
+        $coupons = array();
+        $args = array(
+            'posts_per_page' => -1,
+            'post_type' => 'shop_coupon',
+            'post_status' => 'publish'
+        );
+
+        $posts = get_posts($args);
+        foreach ($posts as $post) {
+            $coupon = new WC_Coupon($post->ID);
+            $coupons[$coupon->get_code()] = $coupon->get_code();
         }
 
-        return $new_settings;
+        return $coupons;
     }
 
     /**
@@ -296,15 +318,34 @@ class WC_Points_Rewards_Extended {
 
     /**
      * Apply role-based point multiplier
-     *
-     * @param int $points Points to multiply
-     * @param mixed $order_or_product Order or product object
-     * @param string|null $item_key Item key
-     * @param array|null $item Item data
-     * @param WC_Order|null $order Order object
-     * @return int Modified points
      */
     public function apply_role_points_multiplier($points, $order_or_product, $item_key = null, $item = null, $order = null) {
+        // Check for bypass coupons in cart context
+        if (function_exists('WC') && WC()->cart) {
+            $bypass_coupons = get_option('wc_points_rewards_bypass_multiplier_coupons', array());
+            $applied_coupons = WC()->cart->get_applied_coupons();
+
+            foreach ($applied_coupons as $coupon_code) {
+                if (in_array($coupon_code, $bypass_coupons)) {
+                    return $points;
+                }
+            }
+        }
+
+        // Check for bypass coupons in order context
+        if ($order instanceof WC_Order || $order_or_product instanceof WC_Order) {
+            $order = $order ?: $order_or_product;
+            $bypass_coupons = get_option('wc_points_rewards_bypass_multiplier_coupons', array());
+            $applied_coupons = $order->get_coupon_codes();
+
+            foreach ($applied_coupons as $coupon_code) {
+                if (in_array($coupon_code, $bypass_coupons)) {
+                    return $points;
+                }
+            }
+        }
+
+        // If no bypass coupons are found, proceed with role-based multipliers
         $user_id = $this->get_user_id($order_or_product, $order);
         if (!$user_id) {
             return $points;
@@ -327,11 +368,26 @@ class WC_Points_Rewards_Extended {
     }
 
     /**
+     * Override parent plugin's points earned calculation to not reduce by discounts
+     */
+    public function get_points_earned_for_purchase() {
+        $points_earned = 0;
+
+        foreach (WC()->cart->get_cart() as $item_key => $item) {
+            $points_earned += apply_filters('woocommerce_points_earned_for_cart_item', WC_Points_Rewards_Product::get_points_earned_for_product_purchase($item['data']), $item_key, $item) * $item['quantity'];
+        }
+
+        // Apply role multiplier with coupon bypass check
+        $points_earned = $this->apply_role_points_multiplier($points_earned, WC()->cart);
+
+        // Round the points
+        $points_earned = WC_Points_Rewards_Manager::round_the_points($points_earned);
+
+        return apply_filters('wc_points_rewards_points_earned_for_purchase', $points_earned, WC()->cart);
+    }
+
+    /**
      * Get user ID from order or product
-     *
-     * @param mixed $order_or_product Order or product object
-     * @param WC_Order|null $order Order object
-     * @return int|null User ID
      */
     private function get_user_id($order_or_product, $order) {
         if ($order_or_product instanceof WC_Order) {
@@ -376,45 +432,6 @@ class WC_Points_Rewards_Extended {
 
         // Subtract points that would be earned on the discount amount
         return max(0, $points - $points_for_discount);
-    }
-
-    /**
-     * Override parent plugin's points earned calculation to not reduce by discounts
-     */
-    public function get_points_earned_for_purchase() {
-        $points_earned = 0;
-
-        foreach (WC()->cart->get_cart() as $item_key => $item) {
-            $points_earned += apply_filters('woocommerce_points_earned_for_cart_item', WC_Points_Rewards_Product::get_points_earned_for_product_purchase($item['data']), $item_key, $item) * $item['quantity'];
-        }
-
-        // Apply role multiplier
-        $points_earned = $this->apply_role_multiplier($points_earned);
-
-        // Round the points
-        $points_earned = WC_Points_Rewards_Manager::round_the_points($points_earned);
-
-        return apply_filters('wc_points_rewards_points_earned_for_purchase', $points_earned, WC()->cart);
-    }
-
-    /**
-     * Apply role-based multiplier to points
-     */
-    private function apply_role_multiplier($points) {
-        if (!is_user_logged_in()) {
-            return $points;
-        }
-
-        $user = wp_get_current_user();
-        $multipliers = get_option('wc_points_rewards_role_multipliers', array());
-
-        foreach ($user->roles as $role) {
-            if (isset($multipliers[$role]) && $multipliers[$role] > 0) {
-                return $points * $multipliers[$role];
-            }
-        }
-
-        return $points;
     }
 }
 
