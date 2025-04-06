@@ -1,14 +1,19 @@
 <?php
 /**
  * Plugin Name: WooCommerce Points and Rewards Extended
- * Plugin URI: https://beenacle.com/
- * Description: Extends WooCommerce Points and Rewards with auto-apply discounts and role-based points multipliers.
- * Author: Beenacle Technologies
- * Author URI: https://beenacle.com/
- * Version: 1.0.0
+ * Plugin URI: https://github.com/beenacle/wc-points-rewards-extended
+ * Description: Extends WooCommerce Points and Rewards with role-based multipliers, CSV import, and auto-apply points
+ * Version: 1.0.1
+ * Author: Beenacle Technologies Pvt. Ltd.
+ * Author URI: https://beenacle.com
  * Text Domain: wc-points-rewards-extended
- * Requires Plugins: woocommerce, woocommerce-points-and-rewards
- * License: GPL-3.0-or-later
+ * Domain Path: /languages
+ * Requires at least: 5.0
+ * Requires PHP: 7.2
+ * WC requires at least: 7.5
+ * WC tested up to: 9.8
+ *
+ * @package WC_Points_Rewards_Extended
  */
 
 
