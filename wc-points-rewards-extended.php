@@ -106,7 +106,7 @@ class WC_Points_Rewards_Extended {
         add_filter('woocommerce_admin_settings_sanitize_option_wc_points_rewards_role_multipliers', array($this, 'sanitize_role_multipliers'), 10, 2);
 
         // Points calculation
-        add_filter('wc_points_rewards_points_earned_for_purchase', array($this, 'apply_role_points_multiplier'), 10, 2);
+        add_filter('wc_points_rewards_points_earned_for_purchase', array($this, 'calculate_points_earned_for_purchase'), 10, 2);
         add_filter('woocommerce_points_earned_for_order_item', array($this, 'apply_role_points_multiplier'), 10, 5);
         add_filter('wc_points_rewards_increase_points', array($this, 'apply_role_points_multiplier'), 10, 5);
 
@@ -373,22 +373,40 @@ class WC_Points_Rewards_Extended {
     }
 
     /**
-     * Override parent plugin's points earned calculation to not reduce by discounts
+     * Calculate points earned for purchase based on actual amount paid
      */
-    public function get_points_earned_for_purchase() {
-        $points_earned = 0;
-
-        foreach (WC()->cart->get_cart() as $item_key => $item) {
-            $points_earned += apply_filters('woocommerce_points_earned_for_cart_item', WC_Points_Rewards_Product::get_points_earned_for_product_purchase($item['data']), $item_key, $item) * $item['quantity'];
+    public function calculate_points_earned_for_purchase($points, $cart) {
+        if (!is_a($cart, 'WC_Cart')) {
+            return $points;
         }
 
+        // Get the cart subtotal before any discounts
+        $subtotal = $cart->get_subtotal();
+
+        // Subtract all non-points discounts
+        foreach ($cart->get_coupons() as $coupon) {
+            if (strpos($coupon->get_code(), 'wc_points_redemption_') !== 0) {
+                $subtotal -= $coupon->get_amount();
+            }
+        }
+
+        // Subtract all fees (like the Easter discount)
+        foreach ($cart->get_fees() as $fee) {
+            if ($fee->amount < 0) { // Only subtract negative fees (discounts)
+                $subtotal += $fee->amount;
+            }
+        }
+
+        // Calculate points based on the actual amount paid
+        $points_earned = WC_Points_Rewards_Manager::calculate_points($subtotal);
+
         // Apply role multiplier with coupon bypass check
-        $points_earned = $this->apply_role_points_multiplier($points_earned, WC()->cart);
+        $points_earned = $this->apply_role_points_multiplier($points_earned, $cart);
 
         // Round the points
         $points_earned = WC_Points_Rewards_Manager::round_the_points($points_earned);
 
-        return apply_filters('wc_points_rewards_points_earned_for_purchase', $points_earned, WC()->cart);
+        return $points_earned;
     }
 
     /**
